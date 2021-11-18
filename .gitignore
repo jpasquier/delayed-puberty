@@ -1,0 +1,8 @@
+data/*
+data-raw/*
+documents/*
+results/*
+sessions/*
+heures_668.csv
+TODO.txt
+!*/.keep

@@ -1,0 +1,439 @@
+---
+title: "Retard pubértaire - AUC"
+author: Jérôme Pasquier
+date: 18 novembre 2021
+output: xaringan::moon_reader
+---
+
+```{r, echo=FALSE, message=FALSE}
+
+library(dplyr)
+library(DT)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(pROC)
+library(xaringanExtra)
+
+# Options
+opts_chunk$set(echo = FALSE, dpi=300, fig.width=4.5, fig.height=4.5,
+               out.width="500px", out.height="500px")
+xaringanExtra::use_panelset()
+
+# Data
+load("../results/analyses_20211118/AUC_tables_workspace.rda")
+
+# Help functions
+pred.loo <- function(fit) {
+  d <- fit$model
+  fam <- as.character(fit$call$family)
+  sapply(1:nrow(d), function(i) {
+    m <- glm(fit$call$formula, family = fam, data = d[-i, ])
+    predict(m, newdata = d[i, , drop = FALSE], type = "response")
+  })
+}
+plot_roc <- function(fit) {
+  r0 <- roc(fit$model[[1]], predict(fit, type = "response"), direction = "<")
+  r1 <- roc(fit$model[[1]], pred.loo(fit), direction = "<")
+  ggroc(list(All = r0, LOO = r1)) +
+    annotate("text", x = .5, y = .25, hjust =0,
+             label = paste0("Area under the curve\nAll: ", signif(r0$auc, 4),
+                            "\nLOO: ", signif(r1$auc, 4))) +
+    theme_bw() +
+    theme(axis.line = element_line(colour = "black"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_blank(),
+          panel.background = element_blank(),
+          #legend.position="bottom",
+          legend.title=element_blank()) +
+    scale_colour_manual(values = c("black", "red"))
+}
+
+```
+
+```{css, echo=FALSE}
+pre {
+  max-width: 100%;
+  overflow-y: scroll-x;
+}
+.small .remark-code {
+  font-size: 70% !important;
+}
+```
+<!-- https://privefl.github.io/R-presentation/rmarkdown.html#33 -->
+
+## Exemple de prédiction parfaite
+
+- Variable réponse : CHH
+- Variable explicatives : Olfaction, GnRH\_Test\_LH\_base, First\_T
+
+```{r}
+y <- "CHH"
+x <- c("Olfaction", "GnRH_Test_LH_base", "First_T")
+dta[c(y, x)] %>%
+  kable %>%
+  kable_styling("striped", full_width = FALSE) %>% 
+  scroll_box(height = "400px")
+sdta <- na.omit(dta[c(y, x)])
+```
+
+Nombre d'observations complètes : `r nrow(sdta)`
+
+---
+
+## Modèle de régression logistique :
+
+.small[
+```{r}
+fml <- as.formula(paste(y, "~", paste(x, collapse = " + ")))
+fit <- do.call("glm", list(formula = fml, family = quote(binomial),
+                           data = quote(sdta)))
+summary(fit)
+```
+]
+
+---
+
+## Prédictions du modèle
+
+```{r}
+cbind(
+  fit$model,
+  CombLin = predict(fit),
+  Proba = predict(fit, type = "response")
+) %>%
+  kable %>%
+  kable_styling("striped", full_width = FALSE) %>% 
+  scroll_box(height = "500px")
+```
+
+---
+
+## Courbe ROC
+
+```{r, message=FALSE}
+r <- roc(fit$model$CHH, predict(fit, type = "response"), direction = "<")
+ggroc(r) +
+  geom_abline(intercept = 1, slope = 1, color = "grey60") +
+  annotate("text", x = .25, y = .25,
+           label = paste("Area under the curve:", signif(r$auc, 4))) +
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+```
+
+---
+
+## Exemple de prédiction parfaite (2)
+
+- Variable réponse : Complete CHH
+- Variable explicatives : First\_INB
+
+```{r}
+y <- "Complete_CHH"
+x <- "First_INB"
+dta[c("Complete_CHH", "First_INB")] %>%
+  filter(!is.na(Complete_CHH)) %>%
+  kable %>%
+  kable_styling("striped", full_width = FALSE) %>% 
+  scroll_box(height = "400px")
+```
+
+Nombre d'observations complètes :
+`r sum(!is.na(dta$Complete_CHH) & !is.na(dta$First_INB))`
+
+---
+
+## Modèle de régression logistique :
+
+.small[
+```{r}
+fit <- glm(Complete_CHH ~ First_INB, family = binomial, data = dta)
+summary(fit)
+```
+]
+
+---
+
+## First\_INB ~ Complete\_CHH
+
+```{r}
+dta %>%
+  filter(!is.na(Complete_CHH), !is.na(First_INB)) %>%
+  mutate(Complete_CHH = factor(Complete_CHH)) %>%
+  ggplot(aes(x = Complete_CHH, First_INB)) +
+  geom_boxplot()
+```
+
+---
+
+## Prédictions du modèle
+
+```{r}
+cbind(
+  fit$model,
+  CombLin = predict(fit),
+  Proba = predict(fit, type = "response")
+) %>%
+  kable %>%
+  kable_styling("striped", full_width = FALSE) %>% 
+  scroll_box(height = "500px")
+```
+
+---
+
+## Meilleurs prédicteurs
+
+```{r}
+Y <- c(chh = "CHH", pchh = "Partial_CHH", cchh = "Complete_CHH")
+tbls1 <- lapply(Y, function(y) {
+  tbl %>%
+    filter(Response == y, is.na(Predictor.2)) %>%
+    select(Predictor.1, N, ends_with("AUC", ignore.case = FALSE)) %>%
+    rename(Predictor = Predictor.1) %>%
+    arrange(desc(AUC)) %>%
+    datatable(rownames = FALSE, options = list(dom = "tp", pageLength = 8)) %>%
+    formatRound(columns = grep("AUC$", names(tbl), value = TRUE), digits=3)
+})
+```
+
+.panelset[
+
+.panel[.panel-name[CHH]
+
+```{r}
+tbls1$chh
+```
+
+]
+
+.panel[.panel-name[Partial CHH]
+
+```{r}
+tbls1$pchh
+```
+
+]
+
+.panel[.panel-name[Complete CHH]
+
+```{r}
+tbls1$cchh
+```
+
+]
+
+]
+
+---
+
+## Validation croisée : Leave-one-out
+
+- On écarte la première observation de l'échantillon
+
+- On estime le modèle sur les observations restantes
+
+- On prédit, à l'aide du modèle estimé, la probabilité que l'observation
+  écartée soit positive
+
+- On répète les trois étapes précédentes pour chaque observation
+
+- On obtient une probabilité d'être positif pour chaque observation
+
+- On calcule une courbe ROC et une aire sous la courbe à l'aide de ce vecteur
+  de probabilité
+
+---
+
+## Modèle intéressant - CHH
+
+- Variable réponse : CHH
+- Variable explicatives : Olfaction, Age\_1st
+
+```{r}
+y <- "CHH"
+x <- c("Olfaction", "Age_1st")
+dta[c(y, x)] %>%
+  kable %>%
+  kable_styling("striped", full_width = FALSE) %>% 
+  scroll_box(height = "400px")
+sdta <- na.omit(dta[c(y, x)])
+```
+
+Nombre d'observations complètes : `r nrow(sdta)`
+
+---
+
+## Régression logistique - CHH
+
+.small[
+```{r, message=FALSE}
+fits <- list(
+  glm(CHH ~ Olfaction2 + Age_1st, family = binomial, data = dta),
+  glm(CHH ~ Olfaction2, family = binomial, data = dta),
+  glm(CHH ~ Age_1st, family = binomial, data = dta)
+)
+summary(fits[[1]])
+```
+]
+
+---
+
+## Courbes ROC - CHH
+
+.panelset[
+
+.panel[.panel-name[Olfaction + Age\_1st]
+
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[1]])
+```
+
+]
+
+.panel[.panel-name[Olfaction]
+
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[2]])
+```
+
+]
+
+.panel[.panel-name[Age\_1st]
+
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[3]])
+```
+
+]
+
+]
+
+---
+
+## Modèle intéressant - Partial CHH
+
+- Variable réponse : Partial\_CHH
+- Variable explicatives : Olfaction, Age\_1st
+
+```{r}
+y <- "Partial_CHH"
+x <- c("Olfaction", "Age_1st")
+dta[c(y, x)] %>%
+  kable %>%
+  kable_styling("striped", full_width = FALSE) %>% 
+  scroll_box(height = "400px")
+sdta <- na.omit(dta[c(y, x)])
+```
+
+Nombre d'observations complètes : `r nrow(sdta)`
+
+---
+
+## Régression logistique - Partial CHH
+
+.small[
+```{r, message=FALSE}
+fits <- list(
+  glm(Partial_CHH ~ Olfaction2 + Age_1st, family = binomial, data = dta),
+  glm(Partial_CHH ~ Olfaction2, family = binomial, data = dta),
+  glm(Partial_CHH ~ Age_1st, family = binomial, data = dta)
+)
+summary(fits[[1]])
+```
+]
+
+---
+
+## Courbes ROC - Partial CHH
+
+.panelset[
+
+.panel[.panel-name[Olfaction + Age\_1st]
+
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[1]])
+```
+
+]
+
+.panel[.panel-name[Olfaction]
+
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[2]])
+```
+
+]
+
+.panel[.panel-name[Age\_1st]
+
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[3]])
+```
+
+]
+
+]
+
+---
+
+## Modèle intéressant - Complete CHH
+
+- Difficile à déterminer
+- Pas assez de données (il n'y a que 6 réponses positives)
+- On peut essayer le même modèle que pour CHH et Partial CHH
+
+---
+
+## Régression logistique - Complete CHH
+
+.small[
+```{r, message=FALSE}
+fits <- list(
+  glm(Complete_CHH ~ Olfaction2 + Age_1st, family = binomial, data = dta),
+  glm(Complete_CHH ~ Olfaction2, family = binomial, data = dta),
+  glm(Complete_CHH ~ Age_1st, family = binomial, data = dta)
+)
+summary(fits[[1]])
+```
+]
+
+---
+
+## Courbes ROC - Complete CHH
+
+.panelset[
+
+.panel[.panel-name[Olfaction + Age\_1st]
+
+.small[
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[1]])
+```
+]
+
+]
+
+.panel[.panel-name[Olfaction]
+
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[2]])
+```
+
+]
+
+.panel[.panel-name[Age\_1st]
+
+```{r, message=FALSE, fig.width=6, out.width="600px", out.height="400px"}
+plot_roc(fits[[3]])
+```
+
+]
+
+]
+
+
