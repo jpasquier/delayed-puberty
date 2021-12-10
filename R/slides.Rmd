@@ -2,7 +2,9 @@
 title: "Retard pubértaire - AUC"
 author: Jérôme Pasquier
 date: 18 novembre 2021
-output: xaringan::moon_reader
+output:
+  xaringan::moon_reader:
+    chakra: libs/remark-latest.min.js
 ---
 
 ```{r, echo=FALSE, message=FALSE}
@@ -18,6 +20,7 @@ library(xaringanExtra)
 # Options
 opts_chunk$set(echo = FALSE, dpi=300, fig.width=4.5, fig.height=4.5,
                out.width="500px", out.height="500px")
+xaringan::summon_remark()
 xaringanExtra::use_panelset()
 
 # Data

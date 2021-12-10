@@ -8,4 +8,5 @@ TODO.txt
 R/ggcaterpillar.R
 R/slides.html
 R/slides_files/
+R/libs/
 !*/.keep
