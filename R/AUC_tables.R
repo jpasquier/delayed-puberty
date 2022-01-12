@@ -16,17 +16,19 @@ outdir <- paste0("results/analyses_", format(Sys.Date(), "%Y%m%d"))
 if (!dir.exists(outdir)) dir.create(outdir)
 
 # Load data
-f <- "data-raw/HEL_Database_october2021_updated_withoutnames_stats.xlsx"
-dta <- as.data.frame(read_xlsx(f, na = c("", "NA")))
+f <- "data-raw/Database_DECEMBER_21_updated_withoutnames_final.xlsx"
+s <- "HEL_BL_CLIN_CX_RAW"
+dta <- as.data.frame(read_xlsx(f, sheet = s, na = c("", "NA")))
 rownames(dta) <- dta$Pt
-rm(f)
+rm(f, s)
 
 # Rename variables
 names(dta) <- sub("^1st", "First", names(dta))
 names(dta) <- sub("/", "_", names(dta))
 
 # Predictors
-X <- names(dta)[!(grepl("^(Pt|Dx)$", names(dta)))]
+X <- c("First_LH", "First_FSH", "First_T", "First_INB", "First_IGF1", "Crypt",
+       "Micro", "First_TV")
 
 # Recoding
 for (j in which(sapply(dta, class) == "character")) {
@@ -59,7 +61,6 @@ if (file.exists(f)) {
   M <- unlist(recursive = FALSE, lapply(Y, function(y) {
     print(y)
     clps <- function(z) paste(z, collapse = " / ")
-
     x_list <- unlist(lapply(1:3, function(k) combn(X, k, simplify = FALSE)),
                      recursive = FALSE)
     x_list <- Reduce(append, lapply(x_list, function(x) {
@@ -136,9 +137,11 @@ if (file.exists(f)) {
         loo.fit.err <- na.omit(unique(sapply(loo, function(z) z$fit.err)))
         loo.fit.err <- if (length(loo.fit.err) == 0) NA else clps(loo.fit.err)
         loo.pred.wrn <- na.omit(unique(sapply(loo, function(z) z$pred.wrn)))
-        loo.pred.wrn <- if (length(loo.pred.wrn) == 0) NA else clps(loo.pred.wrn)
+        loo.pred.wrn <-
+          if (length(loo.pred.wrn) == 0) NA else clps(loo.pred.wrn)
         loo.pred.err <- na.omit(unique(sapply(loo, function(z) z$pred.err)))
-        loo.pred.err <- if (length(loo.pred.err) == 0) NA else clps(loo.pred.err)
+        loo.pred.err <-
+          if (length(loo.pred.err) == 0) NA else clps(loo.pred.err)
         if (is.na(loo.fit.err) & is.na(loo.pred.err)) {
           z <- suppressMessages(roc(resp, loo.prob, direction = "<"))
           loo.auc <- as.numeric(z$auc)
@@ -217,7 +220,7 @@ lapply(setNames(Y, Y), function(y) {
 }) %>%
   write_xlsx(file.path(outdir, "AUC_tables.xlsx"))
 
-# Help function
+# Help functions
 get_fit <- function(m) {
   y <- m$row$Response
   x <- m$row[paste0("Predictor.", 1:3)]
@@ -227,6 +230,57 @@ get_fit <- function(m) {
   do.call("glm", list(formula = fml, family = quote(binomial),
                       data = quote(dta)))
 }
+pred.loo <- function(fit) {
+  d <- fit$model
+  fam <- as.character(fit$call$family)
+  sapply(1:nrow(d), function(i) {
+    m <- glm(fit$call$formula, family = fam, data = d[-i, ])
+    predict(m, newdata = d[i, , drop = FALSE], type = "response")
+  })
+}
+plot_roc <- function(fit, sttl) {
+  r0 <- suppressMessages(roc(fit$model[[1]], predict(fit, type = "response"),
+                             direction = "<"))
+  r1 <- suppressMessages(roc(fit$model[[1]], pred.loo(fit), direction = "<"))
+  n <- nrow(fit$model)
+  ggroc(list(All = r0, LOO = r1)) +
+    annotate("text", x = .5, y = .25, hjust =0,
+             label = paste0("Area under the curve\nAll: ", signif(r0$auc, 4),
+                            "\nLOO: ", signif(r1$auc, 4))) +
+    theme_bw() +
+    theme(axis.line = element_line(colour = "black"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_blank(),
+          panel.background = element_blank(),
+          #legend.position="bottom",
+          legend.title=element_blank()) +
+    scale_colour_manual(values = c("black", "red")) +
+    labs(title = "ROC curve", subtitle = sttl, caption = paste("N:", n))
+}
+
+# AUC figures
+auc_figs <- mclapply(M, function(m) {
+  fit <- get_fit(m)
+  sttl <- paste(as.character(fit$formula)[c(2, 1, 3)], collapse = " ")
+  sttl <- paste0("Model ", m$model, ": ", sttl)
+  fig <- plot_roc(fit, sttl)
+  f <- paste(as.character(fit$formula)[2:3], collapse = "__")
+  f <- gsub(" \\+ ", "__", f)
+  f <- paste0("Model_", m$model, "__", f, ".tiff")
+  d <- file.path(outdir, "AUC_figures")
+  if (!dir.exists(d)) dir.create(d)
+  f <- file.path(d, f)
+  attr(fig, "filename") <- f
+  return(fig)
+})
+for (fig in auc_figs) {
+  tiff(attr(fig, "filename"), width = 1800, height = 1200, res = 300,
+       compression = "zip")
+  print(fig)
+  dev.off()
+}
+rm(fig)
 
 # Save image
 save.image(file = file.path(outdir, "AUC_tables_workspace.rda"))

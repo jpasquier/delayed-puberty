@@ -28,7 +28,7 @@ outdir <- file.path(outdir, c("all_observations", "until_16.5y")[k])
 if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
 
 # Load data
-dta <- read_xlsx("data-raw/Evolution-november_AI_updated.xlsx",
+dta <- read_xlsx("data-raw/Evolution-december_2021_AI_updated.xlsx",
                  na = c("", "NA", "-"))
 names(dta) <- trimws(gsub("\\(.+\\)|\\r\\n", "", names(dta)))
 
@@ -46,7 +46,7 @@ dta <- merge(dta, dx, by = "ID", all.x = TRUE)
 rm(dx)
 
 # Outcomes
-Y <- c("TV", "T", "LH", "FSH", "AMH", "INB")
+Y <- c("TV", "T", "LH", "FSH", "IGF1", "AMH", "INB")
 
 # Analyses
 R <- mclapply(setNames(Y, Y), function(y) {
