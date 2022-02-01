@@ -14,7 +14,7 @@ library(writexl)
 options(mc.cores = detectCores() - 1)
 
 # Define subset
-# k = 1  -> All observation
+# k = 1  -> All observations
 # k = 2  -> Inculude only observations until 16.5y
 k <- 2
 
@@ -33,6 +33,7 @@ dta <- read_xlsx("data-raw/Evolution-december_2021_AI_updated.xlsx",
 names(dta) <- trimws(gsub("\\(.+\\)|\\r\\n", "", names(dta)))
 
 # Subset
+dta <- dta[dta$Age >= 14, ]
 if (k == 2) {
   dta <- dta[dta$Age <= 16.5, ]
 }
@@ -49,49 +50,36 @@ rm(dx)
 Y <- c("TV", "T", "LH", "FSH", "IGF1", "AMH", "INB")
 
 # Analyses
+options(warn = 1)
 R <- mclapply(setNames(Y, Y), function(y) {
   sdta <- dta %>%
     select(ID, DX, Age, one_of(y)) %>%
-    drop_na()
-  fml <- as.formula(paste(y, "~ DX * Age + (1 | ID)"))
+    drop_na() %>%
+    mutate(Age2 = Age^2, Age3 = Age^3)
+  #fml <- as.formula(paste(y, "~ DX * poly(Age, 3) + (1 | ID)"))
+  fml <- as.formula(paste(y, "~ DX * (Age + I(Age^2) + I(Age^3)) + (1 | ID)"))
   ctrl <- lmerControl(optimizer ="Nelder_Mead")
-  DX_list <- c("CDGP", "Partial CHH", "Complete CHH")
-  DX_list <- setNames(DX_list, sub(" ", "_", DX_list))
-  ref_ages <- c(0, seq(14, c(20, 16.5)[k], .5)) %>% setNames(., .)
-  fits <- lapply(ref_ages, function(a) {
-    lapply(DX_list, function(dx) {
-      sdta <- sdta %>%
-        mutate(
-          DX = relevel(DX, dx),
-          Age = Age - a
-        )
-      fit <- do.call("lmer", list(formula = fml, data = quote(sdta),
-                                  control = quote(ctrl)))
-      tbl <- tidy(fit, conf.int = TRUE) %>%
-        select(term, estimate, std.error, conf.low, conf.high, p.value) %>%
-        mutate(
-          term = sub("^DX", "", term),
-          term = sub(":", " x ", term),
-          term = sub("sd__", "SD ", term),
-        )
-      if (a != 0) {
-        tbl <- tbl %>%
-          mutate(term = sub("Age", paste0("AgeC", a), term))
-      }
-      names(tbl)[1] <- paste0("term (ref: ", dx, ")")
-      list(fit = fit, tbl = tbl)
-    })
-  })
-  tbls <- lapply(fits, function(z) lapply(z, function(w) w$tbl))
-  fits <- lapply(fits, function(z) lapply(z, function(w) w$fit))
+  fit <- do.call("lmer", list(formula = fml, data = quote(sdta),
+                 control = quote(ctrl)))
+  tbl <- tidy(fit, conf.int = TRUE) %>%
+    select(term, estimate, std.error, conf.low, conf.high, p.value) %>%
+    mutate(
+      term = sub("^DX", "", term),
+      term = sub(":", " x ", term),
+      term = sub("sd__", "SD ", term),
+    )
   figs <- list()
-  dgp <- plot_model(fits[[1]][[1]], type = "diag")
+  dgp <- plot_model(fit, type = "diag")
   dgp[[2]] <- dgp[[2]]$ID
   figs$diag <- ggarrange(plotlist = dgp, nrow = 2, ncol = 2) %>%
     annotate_figure(top = text_grob("Diagnostic plots", 
                     face = "bold", size = 16)) %>%
     suppressMessages()
-  figs$pred1 <- augment(fits[[1]][[1]]) %>%
+  figs$pred1 <- augment(fit) %>%
+    #mutate(
+    #  p = `poly(Age, 3)`,
+    #  Age = with(attr(p, "coefs"), alpha[1] + sqrt(norm2)[3] * p[, 1])
+    #) %>%
     group_by(ID) %>%
     filter(n() > 1) %>%
     ggplot(aes(Age, !!sym(y))) +
@@ -100,41 +88,30 @@ R <- mclapply(setNames(Y, Y), function(y) {
     facet_wrap(~ID) +
     labs(title = "Individual predictions") +
     theme(legend.position = "bottom", legend.title = element_blank())
-  ndta <- do.call(rbind, lapply(names(fits[[1]]), function(dx) {
-    ggpredict(fits[[1]][[dx]], "Age") %>%
-      as_tibble() %>%
-      select(x, predicted, conf.low, conf.high) %>%
-      mutate(dx = dx)
-  })) %>%
-    mutate(dx = factor(dx, names(fits[[1]])))
+  ndta <- ggpredict(fit, c("Age [all]", "DX")) %>%
+    as_tibble() %>%
+    select(x, predicted, conf.low, conf.high, group)
   figs$pred2 <- ggplot(ndta, aes(x = x, y = predicted)) +
-    geom_line(aes(colour = dx)) +
-    geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = dx), alpha = 0.3,
-                show.legend = FALSE) +
+    geom_line(aes(colour = group)) +
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group),
+                alpha = 0.3, show.legend = FALSE) +
     labs(x = "Age", y = y, title = "Fixed effects predictions") +
     theme(legend.position = "bottom", legend.title = element_blank())
-  list(fits = fits, tbls = tbls, figs = figs)
+  list(fit = fit, tbl = tbl, figs = figs)
 })
 
 # Any singular fit ?
-b <- lapply(R, function(r) lapply(r$fits, function(z) lapply(z, isSingular)))
+b <- sapply(R, function(r) isSingular(r$fit))
 if (any(unlist(b))) warning("Singular fit")
 rm(b)
 
 # Export results - Tables
-Z <- lapply(R, function(r) lapply(r$tbls, function(z) {
-  tbl <- lapply(z, cbind, NA) %>%
-    append(list(.name_repair = "minimal")) %>%
-    do.call(bind_cols, .)
-  names(tbl)[names(tbl) == "NA"] <- ""
-  return(tbl)
-}))
-for (y in names(Z)) {
+for (y in names(R)) {
   f <- paste(y, "regression_coefficients.xlsx", sep = "_")
   f <- file.path(outdir, f)
-  write_xlsx(Z[[y]], f)
+  write_xlsx(R[[y]]$tbl, f)
 }
-rm(Z, f, y)
+rm(f, y)
 
 # Export results - Figures
 for (y in names(R)) {
