@@ -34,6 +34,7 @@ dta$Partial_CHH <- ifelse(grepl("^Partial CHH", dta$Dx), 1, ifelse(
   grepl("^CDGP", dta$Dx), 0, NA))
 dta$Complete_CHH <- ifelse(grepl("^Complete CHH", dta$Dx), 1, ifelse(
   grepl("^CDGP", dta$Dx), 0, NA))
+dta$All_CHH <- with(dta, as.numeric(Partial_CHH | Complete_CHH))
 
 # Add DX to longitudinal data
 dx <- unique(na.omit(lg[c("ID", "DX")]))
@@ -46,41 +47,33 @@ lg$CCHH <- as.numeric(lg$DX == "Complete CHH")
 rm(dx)
 
 # ROC curves
-for (y in c("Partial_CHH", "Complete_CHH")) {
+for (y in c("Partial_CHH", "Complete_CHH", "All_CHH")) {
   X <- c("TV", "T", "LH", "FSH", "INB", "AMH", "IGF1")
   X <- setNames(as.list(paste0("First_", X)), X)
-  names(X)[names(X) == "LH"] <- "Basal LH"
-  names(X)[names(X) == "FSH"] <- "Basal FSH"
-  names(X)[names(X) == "INB"] <- "Inhibin B"
+  names(X)[names(X) == "INB"] <- "INHB"
+  names(X)[names(X) == "IGF1"] <- "IGF-1"
   if (y == "Complete_CHH") {
     X <- append(X, list(
-      `Basal LH + T` = c("First_LH", "First_T"),
-      `Basal LH + Crypt` = c("First_LH", "Crypt"),
-      `TV + Crypt` = c("Crypt", "First_TV"),
-      `T + Crypt` = c("First_T", "Crypt"),
-      `TV + Micropenis` = c("Micro", "First_TV")
+      `LH + Cryptorchidism` = c("First_LH", "Crypt"),
+      `TV + Cryptorchidism` = c("First_TV", "Crypt"),
+      `T + Cryptorchidism` = c("First_T", "Crypt"),
+      `TV + Micropenis` = c("First_TV", "Micro")
     ))
   }
   for (u in names(X)) {
     x <- X[[u]]
     sdta <- na.omit(dta[c(y, x)])
     fml <- as.formula(paste(y, "~", paste(x, collapse = " + ")))
-    prob.loo <- sapply(1:nrow(sdta), function(i) {
-      fit <- suppressWarnings(glm(fml, family = binomial, data = sdta[-i, ]))
-      predict(fit, newdata = sdta[i, , drop = FALSE], type = "response")
-    })
-    r.loo <- suppressMessages(roc(sdta[[y]], prob.loo, direction = "<"))
     if (length(x) == 1) {
       r <- suppressMessages(roc(sdta[[y]], sdta[[x]]))
-      if (any(r.loo$sensitivities >= 0.75 & r.loo$specificities >= 0.75)) {
+      if (any(r$sensitivities >= 0.75 & r$specificities >= 0.75)) {
         outdir2 <- file.path(outdir, "ROC_curves_OK")
       } else {
         outdir2 <- file.path(outdir, "ROC_curves_NotOK")
       }
     } else {
       fit <- suppressWarnings(glm(fml, family = binomial, data = sdta))
-      r <- suppressMessages(
-        roc(fit$model[[y]], predict(fit, type = "response")))
+      r <- suppressMessages(roc(fit$model[[y]], predict(fit)))
       outdir2 <- file.path(outdir, "ROC_curves_Multi")
     }
     if (!dir.exists(outdir2)) dir.create(outdir2)
@@ -90,76 +83,60 @@ for (y in c("Partial_CHH", "Complete_CHH")) {
       names(tbl) <- c(x, "sensitivity", "specificity")
     } else {
       names(tbl) <- c("linear_combination", "sensitivity", "specificity")
+      tbl <- cbind(probability = 1 / (1 + exp(-tbl$linear_combination)), tbl)
+      tbl[[paste0(x[1], " (", x[2], "N)")]] <-
+        (tbl$linear_combination - coef(fit)["(Intercept)"]) / coef(fit)[x[1]]
+      tbl[[paste0(x[1], " (", x[2], "Y)")]] <-
+        (tbl$linear_combination - coef(fit)["(Intercept)"] -
+           coef(fit)[paste0(x[2], "Y")]) / coef(fit)[x[1]]
     }
     tbl$youden_index <- tbl$sensitivity + tbl$specificity - 1
     tbl$youden_max <- tbl$youden_index == max(tbl$youden_index)
-    tbl.loo <- as.data.frame(r.loo[V])
-    names(tbl.loo) <- c("probability", "sensitivity", "specificity")
     a <- suppressWarnings(ci.auc(r))
     a <- sprintf("%2$1.2f (%1$1.2f;%3$1.2f)", a[1], a[2], a[3])
-    a.loo <- suppressWarnings(ci.auc(r.loo))
-    a.loo <- sprintf("%2$1.2f (%1$1.2f;%3$1.2f)",
-                     a.loo[1], a.loo[2], a.loo[3])
-    c.loo <- "#5e81ac"
-    figs <- list()
-    figs[[1]] <- ggplot(tbl, aes(x = 1 - specificity, y = sensitivity)) +
-      geom_abline(slope = 1, intercept = 0, colour = "grey70") +
-      geom_path(data = tbl.loo, colour = c.loo) +
-      geom_path() +
-      geom_point(aes(colour = youden_max)) +
-      annotate("text", x = .3, y = .15, hjust = 0, label = "AUC") +
-      annotate("text", x = .6, y = .15, hjust = 0, label = a) +
-      annotate("text", x = .3, y = .05, hjust = 0, label = "AUC LOO",
-               colour = c.loo) +
-      annotate("text", x = .6, y = .05, hjust = 0, label = a.loo,
-               colour = c.loo) +
-      scale_colour_manual(values = c("black", "red"))
-    figs[[2]] <- ggplot(tbl, aes(x = 1 - specificity, y = sensitivity)) +
+    if (y == "Complete_CHH" & u == "LH") {
+      tbl$youden_max[tbl$First_LH == 0.7] <- FALSE
+    }
+    lbl <- list(data = tbl[tbl$youden_max, , drop = FALSE],
+                var = names(tbl)[1])
+    lbl$data[[1]] <- signif(lbl$data[[1]], 3)
+    lbl$hjust <- if (any(lbl$data$specificity > .9)) -.2 else 1.1
+    lbl$vjust <- if (any(lbl$data$sensitivity > .95)) 2 else -1
+    fig <- ggplot(tbl, aes(x = 1 - specificity, y = sensitivity)) +
       geom_abline(slope = 1, intercept = 0, colour = "grey70") +
       geom_path() +
-      geom_point(aes(colour = youden_max)) +
+      geom_point(aes(colour = youden_max, size = I(youden_max + 1.5))) +
+      geom_text(aes_string(label = lbl$var), data = lbl$data,
+                hjust = lbl$hjust, vjust = lbl$vjust) +
       annotate("text", x = .45, y = .1, hjust = 0, label = "AUC") +
       annotate("text", x = .60, y = .1, hjust = 0, label = a) +
-      scale_colour_manual(values = c("black", "red"))
-    figs[[3]] <- ggplot(tbl.loo, aes(x = 1 - specificity, y = sensitivity)) +
-      geom_abline(slope = 1, intercept = 0, colour = "grey70") +
-      geom_path() +
-      geom_point() +
-      annotate("text", x = .3, y = .1, hjust = 0, label = "AUC LOO") +
-      annotate("text", x = .6, y = .1, hjust = 0, label = a.loo)
-    figs <- lapply(figs, function(fig) {
-      fig <- fig + 
-        lims(x = 0:1, y = 0:1) +
-        theme_bw() +
-        theme(axis.line = element_line(colour = "black"),
-              panel.grid.major = element_blank(),
-              panel.grid.minor = element_blank(),
-              panel.border = element_blank(),
-              panel.background = element_blank(),
-              legend.position="none",
-              plot.title = element_text(hjust = 0.5)) +
-        labs(title = u)
-      return(fig)
-    })
+      scale_colour_manual(values = c("black", "red")) +
+      lims(x = 0:1, y = 0:1) +
+      theme_bw() +
+      theme(axis.line = element_line(colour = "black"),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            panel.background = element_blank(),
+            legend.position="none",
+            plot.title = element_text(hjust = 0.5, face = "bold"),
+            axis.title.x = element_text(size = 11, face = "bold"),
+            axis.title.y = element_text(size = 12, face = "bold")) +
+      labs(title = u)
     yxx <- paste0(y, "__", paste(x, collapse = "__"))
     yxx2 <- sub("^(P|C)(artial_|omplete_)(.+)$", "\\1\\3", yxx)
     f <- file.path(outdir2, paste0("ROC_curve__", yxx, ".xlsx"))
-    tbls <- list(tbl, tbl.loo)
-    names(tbls) <- c(paste0(yxx2, " (n=", nrow(sdta), ")"), "LOO")
-    write_xlsx(tbls, f)
+    write_xlsx(setNames(list(tbl), paste0(yxx2, " (n=", nrow(sdta), ")")), f)
     wth <- 3600
     hgh <- 3600
     res <- 1024
-    for (k in 1:3) {
-      tiff(filename = sub("\\.xlsx$", paste0("__", k, ".tiff"), f),
-           height = hgh, width = wth, res = res, compression = "zip")
-      print(figs[[k]])
-      dev.off()
-      svglite(sub("\\.xlsx$", paste0("__", k, ".svg"), f),
-              width = wth / res, height = hgh / res)
-      print(figs[[k]])
-      dev.off()
-    }
+    tiff(filename = sub("\\.xlsx$", ".tiff", f), height = hgh, width = wth,
+         res = res, compression = "zip")
+    print(fig)
+    dev.off()
+    svglite(sub("\\.xlsx$", ".svg", f), width = wth / res, height = hgh / res)
+    print(fig)
+    dev.off()
     if (length(x) > 1) {
       m <- paste(sprintf("%#1.2f", coef(fit)), names(coef(fit)), sep = " * ")
       m <- paste(sub(" \\* \\(Intercept\\)", "", m), collapse = " + ")
@@ -168,13 +145,13 @@ for (y in c("Partial_CHH", "Complete_CHH")) {
     }
   }
 }
-rm(y, X, u, x, sdta, fml, prob.loo, r.loo, r, outdir2, fit, V, tbl, tbl.loo, a,
-   a.loo, c.loo, figs, yxx, yxx2, f, tbls, wth, hgh, res, k, m)
+rm(y, X, u, x, sdta, fml, r, outdir2, fit, V, tbl, a, lbl, fig, yxx, yxx2,
+   f, wth, hgh, res, m)
 
 # Longitudinal analyses
-Y <- c(TV = "TV (ml)", T = "T (nmol/l)", LH = "Basal LH (U/L)",
-       FSH = "Basal FSH (U/L)", IGF1 = "IGF-1 (µg/l)", AMH = "AMH (pmol/L)",
-       INB = "Inhibin B (pg/ml)")
+Y <- c(TV = "TV (ml)", T = "T (nmol/l)", LH = "LH (U/L)",
+       FSH = "FSH (U/L)", IGF1 = "IGF-1 (µg/l)", AMH = "AMH (pmol/L)",
+       INB = "INHB (pg/ml)")
 for (y in names(Y)) {
   for (k in 1:3) {
     #print(paste(y, k))
@@ -218,14 +195,16 @@ for (y in names(Y)) {
     tbl$term = sub("^DX", "", tbl$term)
     tbl$term = sub(":", " x ", tbl$term)
     tbl$term = sub("sd__", "SD ", tbl$term)
+    age_vect <- seq(14, 19, 0.1)
     if (k %in% 1:2) {
-      ndta <- as.data.frame(ggpredict(fit, c("Age [all]", "DX")))
+      ndta <- as.data.frame(suppressMessages(
+        ggpredict(fit, c("Age [age_vect]", "DX"))))
       ndta <- ndta[c("x", "predicted", "conf.low", "conf.high", "group")]
       names(ndta)[names(ndta) == "x"] <- "Age"
       names(ndta)[names(ndta) == "group"] <- "DX"
     } else {
       ndta <- expand.grid(
-        Age = seq(14, 20, 0.1),
+        Age = age_vect,
         DX = c("CDGP", "Partial CHH", "Complete CHH")
       )
       ndta$PCHH = as.numeric(ndta$DX == "Partial CHH")
@@ -235,20 +214,24 @@ for (y in names(Y)) {
       ndta$predicted <- with(ndta, Model(Age, Asym, Asym2, Asym3, xmid,
                                          scal, PCHH, CCHH))
     }
-    ndta <- subset(ndta, Age >= 14 & Age <= 19)
+    #ndta <- subset(ndta, Age >= 14 & Age <= 19)
     fig <- ggplot(ndta, aes(x = Age, y = predicted)) +
       geom_line(aes(colour = DX)) +
       lims(x = c(14, 19)) +
-      labs(x = "Age", y = Y[y]) +
+      labs(x = "Age (yrs)", y = Y[y]) +
       theme_bw() +
       theme(axis.line = element_line(colour = "black"),
             panel.grid.major = element_blank(),
             panel.grid.minor = element_blank(),
             panel.border = element_blank(),
             panel.background = element_blank(),
-            legend.position = "bottom",
+            legend.position = "none",
             legend.title = element_blank(),
-            plot.title = element_text(hjust = 0.5))
+            plot.title = element_text(hjust = 0.5, face = "bold"),
+            axis.title.x = element_text(size = 11, face = "bold"),
+            axis.title.y = element_text(size = 12, face = "bold"),
+            axis.text.x = element_text(size = rel(1.25)),
+            axis.text.y = element_text(size = rel(1.25)))
     if (k == 3) {
       tbl$term = sub("^Asym2", "AsymPartCHH", tbl$term)
       tbl$term = sub("^Asym3", "AsymCompCHH", tbl$term)
@@ -286,7 +269,7 @@ for (y in names(Y)) {
   }
 }
 rm(Y, y, k, sdta, fml, ctrl, fit, Model, ModelGradient, start_values, v, tbl,
-   ndta, fig, outdir2, f, wth, hgh, res)
+   age_vect, ndta, fig, outdir2, f, wth, hgh, res)
 
 # Session Info
 sink(file.path(outdir, "sessionInfo.txt"))
