@@ -97,17 +97,10 @@ for (y in c("Partial_CHH", "Complete_CHH", "All_CHH")) {
     if (y == "Complete_CHH" & u == "LH") {
       tbl$youden_max[tbl$First_LH == 0.7] <- FALSE
     }
-    lbl <- list(data = tbl[tbl$youden_max, , drop = FALSE],
-                var = names(tbl)[1])
-    lbl$data[[1]] <- signif(lbl$data[[1]], 3)
-    lbl$hjust <- if (any(lbl$data$specificity > .9)) -.2 else 1.1
-    lbl$vjust <- if (any(lbl$data$sensitivity > .95)) 2 else -1
     fig <- ggplot(tbl, aes(x = 1 - specificity, y = sensitivity)) +
       geom_abline(slope = 1, intercept = 0, colour = "grey70") +
       geom_path() +
       geom_point(aes(colour = youden_max, size = I(youden_max + 1.5))) +
-      geom_text(aes_string(label = lbl$var), data = lbl$data,
-                hjust = lbl$hjust, vjust = lbl$vjust) +
       annotate("text", x = .45, y = .1, hjust = 0, label = "AUC") +
       annotate("text", x = .60, y = .1, hjust = 0, label = a) +
       scale_colour_manual(values = c("black", "red")) +
@@ -123,6 +116,33 @@ for (y in c("Partial_CHH", "Complete_CHH", "All_CHH")) {
             axis.title.x = element_text(size = 11, face = "bold"),
             axis.title.y = element_text(size = 12, face = "bold")) +
       labs(title = u)
+    lbl <- list(
+      TV = list(unit = "ml", signif = 1, var = "First_TV", hjust = .6,
+                vjust = -1),
+      LH = list(unit = "U/L", signif = 1, var = "First_LH", hjust = .7,
+                vjust = -1),
+      FSH = list(unit = "U/L", signif = 2, var = "First_FSH", hjust = -.1,
+                 vjust = 2),
+      INHB = list(unit = "pg/ml", signif = 2, var = "First_INB", hjust = -.1,
+                  vjust = 2),
+      `LH + Cryptorchidism` = list(unit = "U/L", signif = 1, hjust = -.1,
+                                   vjust = 2, var = "First_LH (CryptY)"),
+      `TV + Cryptorchidism` = list(unit = "ml", signif = 1, hjust = -.2,
+                                   vjust = 2, var = "First_TV (CryptY)"),
+      `T + Cryptorchidism` = list(unit = "nmol/l", signif = 1, hjust = -.1,
+                                   vjust = 2, var = "First_T (CryptY)"),
+      `TV + Micropenis` = list(unit = "ml", signif = 2, hjust = -.1, vjust = 2,
+                               var = "First_TV (MicroY)")
+    )
+    if (y == "Complete_CHH" & u %in% names(lbl)) {
+      lbl <- lbl[[u]]
+      lbl$data = tbl[tbl$youden_max, , drop = FALSE]
+      lbl$data[[lbl$var]] <-
+        paste(signif(lbl$data[[lbl$var]], lbl$signif), lbl$unit)
+      fig <- fig +
+        geom_text(aes(label = .data[[lbl$var]]), data = lbl$data,
+                  hjust = lbl$hjust, vjust = lbl$vjust)
+    }
     yxx <- paste0(y, "__", paste(x, collapse = "__"))
     yxx2 <- sub("^(P|C)(artial_|omplete_)(.+)$", "\\1\\3", yxx)
     f <- file.path(outdir2, paste0("ROC_curve__", yxx, ".xlsx"))
@@ -230,8 +250,10 @@ for (y in names(Y)) {
             plot.title = element_text(hjust = 0.5, face = "bold"),
             axis.title.x = element_text(size = 11, face = "bold"),
             axis.title.y = element_text(size = 12, face = "bold"),
-            axis.text.x = element_text(size = rel(1.25)),
-            axis.text.y = element_text(size = rel(1.25)))
+            axis.text.x = element_text(size = 10, face = "bold",
+                                       colour = "black"),
+            axis.text.y = element_text(size = 11, face = "bold",
+                                       colour = "black"))
     if (k == 3) {
       tbl$term = sub("^Asym2", "AsymPartCHH", tbl$term)
       tbl$term = sub("^Asym3", "AsymCompCHH", tbl$term)
