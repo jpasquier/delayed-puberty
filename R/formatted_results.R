@@ -169,8 +169,8 @@ rm(y, X, u, x, sdta, fml, r, outdir2, fit, V, tbl, a, lbl, fig, yxx, yxx2,
    f, wth, hgh, res, m)
 
 # Longitudinal analyses
-Y <- c(TV = "TV (ml)", T = "T (nmol/l)", LH = "LH (U/L)",
-       FSH = "FSH (U/L)", IGF1 = "IGF-1 (µg/l)", AMH = "AMH (pmol/L)",
+Y <- c(TV = "TV (ml)", T = "T (nmol/l)", LH = "LH (IU/L)",
+       FSH = "FSH (IU/L)", IGF1 = "IGF-1 (µg/l)", AMH = "AMH (pmol/L)",
        INB = "INHB (pg/ml)")
 for (y in names(Y)) {
   for (k in 1:3) {
@@ -248,11 +248,11 @@ for (y in names(Y)) {
             legend.position = "none",
             legend.title = element_blank(),
             plot.title = element_text(hjust = 0.5, face = "bold"),
-            axis.title.x = element_text(size = 11, face = "bold"),
-            axis.title.y = element_text(size = 12, face = "bold"),
-            axis.text.x = element_text(size = 10, face = "bold",
+            axis.title.x = element_text(size = 11 * 1.6, face = "bold"),
+            axis.title.y = element_text(size = 12 * 1.6, face = "bold"),
+            axis.text.x = element_text(size = 10 * 1.6, face = "bold",
                                        colour = "black"),
-            axis.text.y = element_text(size = 11, face = "bold",
+            axis.text.y = element_text(size = 11 * 1.6, face = "bold",
                                        colour = "black"))
     if (k == 3) {
       tbl$term = sub("^Asym2", "AsymPartCHH", tbl$term)
@@ -267,13 +267,16 @@ for (y in names(Y)) {
     wth <- 5400
     hgh <- 3600
     res <- 1024
-    tiff(filename = f, height = hgh, width = wth, res = res,
-         compression = "zip")
-    print(fig)
-    dev.off()
-    svglite(sub("\\.tiff$", ".svg", f), width = wth / res, height = hgh / res)
-    print(fig)
-    dev.off()
+    if (k == 3) {
+      tiff(filename = f, height = hgh, width = wth, res = res,
+           compression = "zip")
+      print(fig)
+      dev.off()
+      svglite(sub("\\.tiff$", ".svg", f), width = wth / res,
+              height = hgh / res)
+      print(fig)
+      dev.off()
+    }
     if (k %in% 1:2) {
       fig <- fig +
         geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = DX),
